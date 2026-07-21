@@ -1,4 +1,4 @@
-/* wloc.js - Complete Final Build 2026-07-22 */
+/* wloc.js - Optimized Build 2026-07-22 */
 (function () {
   "use strict";
 
@@ -25,7 +25,7 @@
     }
   };
 
-  // 3. 基础字节处理
+  // 3. 基础十六进制与字节处理
   function bytesFromArray(arr) { return new Uint8Array(arr); }
   function concatBytes(parts) {
     let total = 0;
@@ -37,6 +37,13 @@
       offset += parts[i].length;
     }
     return out;
+  }
+  function hexPreview(bytes, limit) {
+    if (!bytes) return "<none>";
+    let out = [];
+    let max = Math.min(bytes.length, limit || 16);
+    for (let i = 0; i < max; i++) out.push(("0" + bytes[i].toString(16)).slice(-2));
+    return out.join("");
   }
   function bodyToBytes(body) {
     if (body == null) return null;
@@ -51,7 +58,7 @@
     return null;
   }
 
-  // 4. Protobuf 编码与解码核心
+  // 4. 极简 Protobuf 编码与解码核心
   function encodeVarint(val) {
     let v = BigInt(Math.trunc(val));
     if (v < 0n) v = BigInt.asUintN(64, v);
@@ -126,11 +133,11 @@
     parts.push(makeVarintField(1, cLat));
     parts.push(makeVarintField(2, cLon));
     parts.push(makeVarintField(3, cAcc));
-    parts.push(makeVarintField(4, 3));
-    parts.push(makeVarintField(5, 530));
-    parts.push(makeVarintField(6, 1000));
-    parts.push(makeVarintField(11, 63));
-    parts.push(makeVarintField(12, 467));
+    parts.push(makeVarintField(4, 3));   // unknownValue4
+    parts.push(makeVarintField(5, 530)); // altitude
+    parts.push(makeVarintField(6, 1000));// verticalAccuracy
+    parts.push(makeVarintField(11, 63)); // motionActivityType
+    parts.push(makeVarintField(12, 467));// motionActivityConfidence
     return concatBytes(parts);
   }
 
@@ -182,10 +189,13 @@
     return { payload: concatBytes(parts), wifiCount, cellCount };
   }
 
+  // 6. 响应体解包与重组
   function processResponse(respBytes, cfg) {
+    // 兼容 ARPC 或前缀标记
     let payload = respBytes;
     let prefix = null;
     
+    // 如果带有苹果的固定前缀
     if (respBytes.length > 10 && respBytes[0] === 0x00 && respBytes[1] === 0x01) {
       let len = (respBytes[8] << 8) | respBytes[9];
       if (len > 0 && 10 + len <= respBytes.length) {
@@ -198,6 +208,7 @@
     let finalBody = patched.payload;
 
     if (prefix) {
+      // 重新组装前缀和新的长度
       let newLen = finalBody.length;
       prefix[8] = (newLen >> 8) & 0xff;
       prefix[9] = newLen & 0xff;
@@ -207,49 +218,18 @@
     return { body: finalBody, wifiCount: patched.wifiCount, cellCount: patched.cellCount };
   }
 
-  // 6. 解析 $argument 辅助函数
-  function parseArgumentString(argStr) {
-    let result = {};
-    if (!argStr || typeof argStr !== "string") return result;
-    let pairs = argStr.split(/[&;]/);
-    for (let i = 0; i < pairs.length; i++) {
-      let part = pairs[i];
-      if (!part) continue;
-      let eq = part.indexOf("=");
-      let k = eq >= 0 ? part.slice(0, eq) : part;
-      let v = eq >= 0 ? part.slice(eq + 1) : "true";
-      try { result[decodeURIComponent(k)] = decodeURIComponent(v); } catch (e) { result[k] = v; }
-    }
-    return result;
-  }
-
-  // 7. 主入口控制 (支持 网页端缓存优先 + 模块 argument 兜底)
+  // 7. 主入口控制
   function run() {
     if (typeof $response === "undefined" || !$response) {
       $done({});
       return;
     }
 
-    // 1. 优先读取网页端实时点选保存的值
+    // 读取你在前端设置并存入设备的坐标
     let settings = Store.getItem("wloc_settings");
-    
-    // 2. 如果本地存储没有，则回退读取模块 argument 里面的默认参数
-    if (!settings || !settings.latitude || !settings.longitude) {
-      if (typeof $argument !== "undefined" && $argument) {
-        let args = parseArgumentString(typeof $argument === "string" ? $argument : JSON.stringify($argument));
-        if (args.latitude && args.longitude) {
-          settings = {
-            latitude: parseFloat(args.latitude),
-            longitude: parseFloat(args.longitude),
-            accuracy: parseInt(args.accuracy || 25, 10)
-          };
-        }
-      }
-    }
-
-    // 3. 如果两边都没有，则最终硬编码兜底为英国伦敦
-    if (!settings || !settings.latitude || !settings.longitude) {
-      settings = { latitude: 51.507900, longitude: -0.127800, accuracy: 25 };
+    if (!settings || !settings.longitude || !settings.latitude) {
+      $done({});
+      return;
     }
 
     let rawBody = $response.bodyBytes || bodyToBytes($response.body);
@@ -262,13 +242,12 @@
       let result = processResponse(rawBody, settings);
       let headers = $response.headers || {};
       
+      // 清除压缩编码，确保系统能直接识别修改后的明文二进制
       delete headers["Content-Encoding"];
       delete headers["content-encoding"];
       delete headers["Transfer-Encoding"];
       delete headers["transfer-encoding"];
       headers["Content-Length"] = String(result.body.length);
-
-      console.log(`[wloc] 🎯 成功劫持定位 -> 经度: ${settings.longitude}, 纬度: ${settings.latitude}`);
 
       if (isLoon) {
         $done({ status: 200, headers: headers, body: result.body });
