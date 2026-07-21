@@ -3,7 +3,7 @@
 #!author=hankinsus Rewrite
 #!homepage=https://github.com/hankinsus/wloc
 #!category=Tools
-#!arguments=经度:113.94114, 纬度:22.544577, 精度:25, 日志级别:info
+#!arguments=经度:-0.127800, 纬度:51.507900, 精度:25, 日志级别:info
 #!arguments-desc=经度/纬度: 默认坐标(在线选点储存后优先)\n精度: GPS精度(米)\n日志级别: off/error/warn/info/debug/all\n\n使用方法: 打开选点页面 -> 选位置 -> 储存到设备
 
 [Script]

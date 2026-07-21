@@ -151,7 +151,7 @@ body { font-family:-apple-system,system-ui,"SF Pro","Helvetica Neue",sans-serif;
 <script>
 const SAVE_API = 'https://gs-loc.apple.com/wloc-settings/save';
 const FAV_KEY = 'wloc_favorites';
-let lat = 22.544577, lon = 113.94114;
+let lat = 51.507900, lon = -0.127800;
 let selected = false;
 let activeLon = null, activeLat = null;
 
