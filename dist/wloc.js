@@ -1,4 +1,4 @@
-/* wloc.js - Optimized Build 2026-07-22 */
+/* wloc.js - Final Fixed Build 2026-07-22 */
 (function () {
   "use strict";
 
@@ -109,7 +109,7 @@
     return fields;
   }
 
-  // 5. 定位修改核心 (支持 WiFi & Cell 基站)
+  // 5. 定位修改核心
   const LOCATION_REPLACED = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 11: true, 12: true };
   const CELL_FIELDS = { 22: true, 24: true };
 
@@ -126,11 +126,11 @@
     parts.push(makeVarintField(1, cLat));
     parts.push(makeVarintField(2, cLon));
     parts.push(makeVarintField(3, cAcc));
-    parts.push(makeVarintField(4, 3));   // unknownValue4
-    parts.push(makeVarintField(5, 530)); // altitude
-    parts.push(makeVarintField(6, 1000));// verticalAccuracy
-    parts.push(makeVarintField(11, 63)); // motionActivityType
-    parts.push(makeVarintField(12, 467));// motionActivityConfidence
+    parts.push(makeVarintField(4, 3));
+    parts.push(makeVarintField(5, 530));
+    parts.push(makeVarintField(6, 1000));
+    parts.push(makeVarintField(11, 63));
+    parts.push(makeVarintField(12, 467));
     return concatBytes(parts);
   }
 
@@ -182,7 +182,6 @@
     return { payload: concatBytes(parts), wifiCount, cellCount };
   }
 
-  // 6. 响应体解析与重组成型
   function processResponse(respBytes, cfg) {
     let payload = respBytes;
     let prefix = null;
@@ -208,45 +207,22 @@
     return { body: finalBody, wifiCount: patched.wifiCount, cellCount: patched.cellCount };
   }
 
-  // 7. 解析 $argument 默认参数
-  function parseArgumentString(argStr) {
-    let result = {};
-    if (!argStr || typeof argStr !== "string") return result;
-    let pairs = argStr.split(/[&;]/);
-    for (let i = 0; i < pairs.length; i++) {
-      let part = pairs[i];
-      if (!part) continue;
-      let eq = part.indexOf("=");
-      let k = eq >= 0 ? part.slice(0, eq) : part;
-      let v = eq >= 0 ? part.slice(eq + 1) : "true";
-      try { result[decodeURIComponent(k)] = decodeURIComponent(v); } catch (e) { result[k] = v; }
-    }
-    return result;
-  }
-
+  // 6. 获取配置（直接内置伦敦默认经纬度，彻底绕过小火箭 argument 解析坑）
   function getConfig() {
-    // 默认配置（现已更新为伦敦坐标）
-    let cfg = { latitude: 51.5079, longitude: -0.1278, accuracy: 25 };
+    // 默认兜底坐标：英国伦敦
+    let cfg = { latitude: 51.507900, longitude: -0.127800, accuracy: 25 };
     
-    // 1. 优先读取持久化存储（网页端点选保存的值）
+    // 优先读取网页端实时点选保存的值
     let stored = Store.getItem("wloc_settings");
     if (stored && stored.latitude && stored.longitude) {
       cfg.latitude = parseFloat(stored.latitude);
       cfg.longitude = parseFloat(stored.longitude);
       cfg.accuracy = parseInt(stored.accuracy || 25, 10);
-    } else if (typeof $argument !== "undefined" && $argument) {
-      // 2. 其次读取模块 argument 里面自带的默认参数
-      let args = parseArgumentString(typeof $argument === "string" ? $argument : JSON.stringify($argument));
-      if (args.latitude && args.longitude) {
-        cfg.latitude = parseFloat(args.latitude);
-        cfg.longitude = parseFloat(args.longitude);
-        if (args.accuracy) cfg.accuracy = parseInt(args.accuracy, 10);
-      }
     }
     return cfg;
   }
 
-  // 8. 主入口执行
+  // 7. 主入口执行
   function run() {
     if (typeof $response === "undefined" || !$response) {
       $done({});
@@ -254,11 +230,6 @@
     }
 
     let cfg = getConfig();
-    if (!cfg.latitude || !cfg.longitude) {
-      $done({});
-      return;
-    }
-
     let rawBody = $response.bodyBytes || bodyToBytes($response.body);
     if (!rawBody || rawBody.length < 2) {
       $done({});
