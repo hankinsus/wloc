@@ -2,14 +2,14 @@
 (function () {
   "use strict";
 
-  // 1. 简易环境检测
+  // 1. 运行环境精准识别
   const isSurge = typeof $environment !== "undefined" && Boolean($environment?.["surge-version"]);
   const isStash = typeof $environment !== "undefined" && Boolean($environment?.["stash-version"]);
   const isQuanX = typeof $task !== "undefined";
   const isLoon = typeof $loon !== "undefined";
   const isRocket = typeof $rocket !== "undefined" || (typeof $environment !== "undefined" && $environment?.product === "Shadowrocket");
 
-  // 2. 轻量级持久化读取 (直接对接 wloc_settings)
+  // 2. 本地存储读取 (优先读取网页端保存的 wloc_settings)
   const Store = {
     getItem(key) {
       try {
@@ -25,7 +25,7 @@
     }
   };
 
-  // 3. 基础十六进制与字节处理
+  // 3. 基础工具函数
   function bytesFromArray(arr) { return new Uint8Array(arr); }
   function concatBytes(parts) {
     let total = 0;
@@ -37,13 +37,6 @@
       offset += parts[i].length;
     }
     return out;
-  }
-  function hexPreview(bytes, limit) {
-    if (!bytes) return "<none>";
-    let out = [];
-    let max = Math.min(bytes.length, limit || 16);
-    for (let i = 0; i < max; i++) out.push(("0" + bytes[i].toString(16)).slice(-2));
-    return out.join("");
   }
   function bodyToBytes(body) {
     if (body == null) return null;
@@ -58,7 +51,7 @@
     return null;
   }
 
-  // 4. 极简 Protobuf 编码与解码核心
+  // 4. Protobuf 编解码核心
   function encodeVarint(val) {
     let v = BigInt(Math.trunc(val));
     if (v < 0n) v = BigInt.asUintN(64, v);
@@ -116,7 +109,7 @@
     return fields;
   }
 
-  // 5. 核心改位逻辑 (支持 WiFi & Cell 基站)
+  // 5. 定位修改核心 (支持 WiFi & Cell 基站)
   const LOCATION_REPLACED = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 11: true, 12: true };
   const CELL_FIELDS = { 22: true, 24: true };
 
@@ -189,13 +182,11 @@
     return { payload: concatBytes(parts), wifiCount, cellCount };
   }
 
-  // 6. 响应体解包与重组
+  // 6. 响应体解析与重组成型
   function processResponse(respBytes, cfg) {
-    // 兼容 ARPC 或前缀标记
     let payload = respBytes;
     let prefix = null;
     
-    // 如果带有苹果的固定前缀
     if (respBytes.length > 10 && respBytes[0] === 0x00 && respBytes[1] === 0x01) {
       let len = (respBytes[8] << 8) | respBytes[9];
       if (len > 0 && 10 + len <= respBytes.length) {
@@ -208,7 +199,6 @@
     let finalBody = patched.payload;
 
     if (prefix) {
-      // 重新组装前缀和新的长度
       let newLen = finalBody.length;
       prefix[8] = (newLen >> 8) & 0xff;
       prefix[9] = newLen & 0xff;
@@ -218,16 +208,53 @@
     return { body: finalBody, wifiCount: patched.wifiCount, cellCount: patched.cellCount };
   }
 
-  // 7. 主入口控制
+  // 7. 解析 $argument 默认参数
+  function parseArgumentString(argStr) {
+    let result = {};
+    if (!argStr || typeof argStr !== "string") return result;
+    let pairs = argStr.split(/[&;]/);
+    for (let i = 0; i < pairs.length; i++) {
+      let part = pairs[i];
+      if (!part) continue;
+      let eq = part.indexOf("=");
+      let k = eq >= 0 ? part.slice(0, eq) : part;
+      let v = eq >= 0 ? part.slice(eq + 1) : "true";
+      try { result[decodeURIComponent(k)] = decodeURIComponent(v); } catch (e) { result[k] = v; }
+    }
+    return result;
+  }
+
+  function getConfig() {
+    // 默认配置（现已更新为伦敦坐标）
+    let cfg = { latitude: 51.5079, longitude: -0.1278, accuracy: 25 };
+    
+    // 1. 优先读取持久化存储（网页端点选保存的值）
+    let stored = Store.getItem("wloc_settings");
+    if (stored && stored.latitude && stored.longitude) {
+      cfg.latitude = parseFloat(stored.latitude);
+      cfg.longitude = parseFloat(stored.longitude);
+      cfg.accuracy = parseInt(stored.accuracy || 25, 10);
+    } else if (typeof $argument !== "undefined" && $argument) {
+      // 2. 其次读取模块 argument 里面自带的默认参数
+      let args = parseArgumentString(typeof $argument === "string" ? $argument : JSON.stringify($argument));
+      if (args.latitude && args.longitude) {
+        cfg.latitude = parseFloat(args.latitude);
+        cfg.longitude = parseFloat(args.longitude);
+        if (args.accuracy) cfg.accuracy = parseInt(args.accuracy, 10);
+      }
+    }
+    return cfg;
+  }
+
+  // 8. 主入口执行
   function run() {
     if (typeof $response === "undefined" || !$response) {
       $done({});
       return;
     }
 
-    // 读取你在前端设置并存入设备的坐标
-    let settings = Store.getItem("wloc_settings");
-    if (!settings || !settings.longitude || !settings.latitude) {
+    let cfg = getConfig();
+    if (!cfg.latitude || !cfg.longitude) {
       $done({});
       return;
     }
@@ -239,15 +266,16 @@
     }
 
     try {
-      let result = processResponse(rawBody, settings);
+      let result = processResponse(rawBody, cfg);
       let headers = $response.headers || {};
       
-      // 清除压缩编码，确保系统能直接识别修改后的明文二进制
       delete headers["Content-Encoding"];
       delete headers["content-encoding"];
       delete headers["Transfer-Encoding"];
       delete headers["transfer-encoding"];
       headers["Content-Length"] = String(result.body.length);
+
+      console.log(`[wloc] 🎯 成功劫持定位 -> 经度: ${cfg.longitude}, 纬度: ${cfg.latitude} (已改写 ${result.wifiCount} 个WiFi, ${result.cellCount} 个基站)`);
 
       if (isLoon) {
         $done({ status: 200, headers: headers, body: result.body });
